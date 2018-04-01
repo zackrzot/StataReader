@@ -21,6 +21,8 @@ namespace StataReader
         private List<String> tempFiles = new List<String>();
         private List<DataPoint> dataPoints;
 
+        private Boolean pdfModeEnabled = true;
+
         public StataReader()
         {
             InitializeComponent();
@@ -41,8 +43,7 @@ namespace StataReader
         private void InitializeOpenFileDialog()
         {
             this.openFileDialog.Filter =
-                "PDF files *.pdf|*.PDF|" +
-                "All files (*.*)|*.*";
+                "PDF files|*.pdf;*.PDF|Text files|*.txt;*.TXT";
 
             // Allow the user to select multiple images.
             this.openFileDialog.Multiselect = true;
@@ -101,43 +102,70 @@ namespace StataReader
 
             DataPoint point = new DataPoint(dataId);
 
+            List<String> foundObjs = new List<string>();
+
             foreach (String file in tempFiles)
             {
                 String fileText = File.ReadAllText(file);
 
                 foreach (String line in fileText.Split('\n'))
                 {
-                    if (!searchOn)
+                    if (pdfModeEnabled)
                     {
-                        foreach (SearchObject searchObj in SearchFilter.ActiveSearchFilter)
+                        if (!searchOn)
                         {
-                            if (line.Contains(searchObj.text))
+                            foreach (SearchObject searchObj in SearchFilter.ActiveSearchFilter)
                             {
-                                if (firstObject == null)
-                                    firstObject = searchObj;
-                                activeObject = searchObj;
-                                searchOn = true;
-
-                                // If data search object has loopes
-                                if ((firstObject != null) && (activeObject == firstObject))
+                                if (line.Contains(searchObj.text))
                                 {
-                                    dataPoints.Add(point);
-                                    dataId++;
-                                    point = new DataPoint(dataId);
+                                    if (firstObject == null)
+                                        firstObject = searchObj;
+                                    activeObject = searchObj;
+                                    searchOn = true;
+
+                                    // If data search object has looped
+                                    if ((firstObject != null) && (activeObject == firstObject))
+                                    {
+                                        dataPoints.Add(point);
+                                        dataId++;
+                                        point = new DataPoint(dataId);
+                                    }
                                 }
+                            }
+                        }
+                        else
+                        {
+                            displaceCounter++;
+                            if (displaceCounter == valDisplacement)
+                            {
+                                point.hits.Add(activeObject.text, cleanLine(line));
+                                searchOn = false;
+                                activeObject = null;
+                                displaceCounter = 0;
                             }
                         }
                     }
                     else
                     {
-                        displaceCounter++;
-                        if (displaceCounter == valDisplacement)
+                        foreach (SearchObject searchObj in SearchFilter.ActiveSearchFilter)
                         {
-                            point.hits.Add(activeObject.text, cleanLine(line));
-                            searchOn = false;
-                            activeObject = null;
-                            displaceCounter = 0;
-                        }
+                            if (line.Contains(searchObj.text))
+                            {
+                                // search object list has looped
+                                if (foundObjs.Contains(searchObj.text))
+                                {
+                                    foundObjs.Clear();
+                                    dataPoints.Add(point);
+                                    dataId++;
+                                    point = new DataPoint(dataId);
+                                }
+
+                                // Add found obj to list
+                                foundObjs.Add(searchObj.text);
+
+                                point.hits.Add(searchObj.text, cleanTxtLine(line));
+                            }
+                        } 
                     }
                 }
             }
@@ -151,6 +179,23 @@ namespace StataReader
 
         }
 
+        private String cleanTxtLine(String line)
+        {
+            line = line.Trim();
+
+            Double result;
+
+            foreach (String part in line.Split(' '))
+            {
+                if (Double.TryParse(part, out result))
+                {
+                    return (result.ToString());
+                }
+            }
+
+            return ("n/a");
+        }
+
         private void updatePDFTempFiles()
         {
             // Save text data to temp storage
@@ -160,14 +205,46 @@ namespace StataReader
             {
                 string outFileName = Path.GetTempPath() + Guid.NewGuid().ToString() + ".txt";
 
-                if (pdfParser.ExtractText(file, outFileName))
+                if (file.EndsWith(".pdf") || file.EndsWith(".PDF"))
                 {
-                    Console.WriteLine("FILE READ OK");
-                    Console.WriteLine(outFileName);
-                    tempFiles.Add(outFileName);
+                    pdfModeEnabled = true;
+                    if (pdfParser.ExtractText(file, outFileName))
+                    {
+                        Console.WriteLine("PDF FILE READ OK");
+                        Console.WriteLine(outFileName);
+                        tempFiles.Add(outFileName);
+                    }
+                    else
+                        MessageBox.Show("Unable to properly read the text from PDF: " + file + ". Data not included in output.", "Error");
                 }
-                else
-                    MessageBox.Show("Unable to properly read the text from PDF: " + file + ". Data not included in output.", "Error");
+
+                if (file.EndsWith(".txt") || file.EndsWith(".TXT"))
+                {
+                    pdfModeEnabled = false;
+                    if (txtHelper(file, outFileName))
+                    {
+                        Console.WriteLine("TXT FILE READ OK");
+                        Console.WriteLine(outFileName);
+                        tempFiles.Add(outFileName);
+                    }
+                    else
+                        MessageBox.Show("Unable to properly read the text from TXT: " + file + ". Data not included in output.", "Error");
+                }
+            }
+
+        }
+
+        private Boolean txtHelper(String file, String outFileName)
+        {
+            try
+            {
+                String text = File.ReadAllText(file);
+                File.WriteAllText(outFileName, text);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
